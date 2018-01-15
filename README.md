@@ -11,7 +11,7 @@ A Mycroft skill for controlling Lifx bulbs.
 [x] Turn lights on/off
 [ ] Dim/bright lights **(in progress)**
 [ ] Set the color of lights (color)
-[ ] Change the warmth of the lights (white)
+[x] Change the warmth of the lights (white) **(in progress)**
 [x] List lights
 
 ## Commands

@@ -12,6 +12,28 @@ from pifx import PIFX
 
 LOGGER = getLogger(__name__)
 
+colors = {
+    "blue": "#0000ff",
+    "crimson": "#dc143c",
+    "cyan": "#00ffff",
+    "fuchsia": "#ff00ff",
+    "gold": "#ffd700",
+    "green": "#008000",
+    "lavender": "#e6e6fa",
+    "lime": "#00ff00",
+    "magenta": "#ff00ff",
+    "orange": "#ffa500",
+    "pink": "#ffc0cb",
+    "purple": "#800080",
+    "red": "#ff0000",
+    "salmon": "#fa8072",
+    "sky blue": "#87ceeb",
+    "teal": "#008080",
+    "turquoise": "#40e0d0",
+    "violet": "#ee82ee",
+    "yellow": "#ffff00"
+}
+
 class LifxSkill(MycroftSkill):
     """
     A Mycroft skill for controlling Lifx devices via the HTTP API.
@@ -125,6 +147,38 @@ class LifxSkill(MycroftSkill):
         #self.lifx.set_delta(selector=selector, brightness=brightness)
 
         self.speak_dialog("done")
+
+    @intent_handler(IntentBuilder("ChangeWarmthIntent")
+        .one_of("CoolKeyword", "DimKeyword")
+        .one_of("Label", "Group", "RoomKeyword", "LightsKeyword"))
+    def handle_change_warmth_intent(self, message):
+        if "CoolKeyword" in message.data:
+            kelvin = 500
+        else:
+            kelvin = -500
+
+        selector = self._choose_selector(message)
+
+        # TODO Get the library updated to include this feature
+        #self.lifx.set_delta(selector=selector, kelvin=kelvin)
+
+        self.speak_dialog("done")
+
+    @intent_handler(IntentBuilder("SetColorIntent")
+        .require("ColorKeyword")
+        .one_of("Label", "Group", "RoomKeyword", "LightsKeyword"))
+    def handle_set_color_intent(self, message):
+        color = colors.get(message.data["ColorKeyword"].lower())
+
+        if color is None:
+            self.speak("I could not determine the color to set the lights to")
+        else:
+            self.lifx.set_state(selector=self._choose_selector(message), color=color)
+
+        self.speak_dialog("done")
+
+
+
 
 def create_skill():
     """
