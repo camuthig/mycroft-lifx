@@ -1,0 +1,2 @@
+(turn )?(?P<LightAction>on|off) (the)?(?P<Entity>.*)(lights)?
+(turn )(the )?(?P<Entity>.*?)( ?P<LightsStatement>lights)? (?P<LightAction>on|off)

@@ -1,1 +1,2 @@
 pifx
+fuzzywuzzy
