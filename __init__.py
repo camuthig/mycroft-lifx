@@ -4,12 +4,11 @@ from os import path
 import time
 import timeit
 from collections import defaultdict
+from pifx import PIFX
 from fuzzywuzzy import fuzz
 from adapt.intent import IntentBuilder
 from mycroft.skills.core import MycroftSkill, intent_handler
 from mycroft.util.log import getLogger
-
-from pifx import PIFX
 
 LOGGER = getLogger(__name__)
 
@@ -46,9 +45,8 @@ class LifxSkill(MycroftSkill):
         self.lifx = PIFX(self._get_key())
 
         # These will be set by _collect_devices
-        self.labels = {}
-        self.groups = {}
-        self.room_lights = {}
+        self.lights = []
+        self.lights_by_room = {}
 
     def initialize(self):
         self._collect_devices()
@@ -74,7 +72,7 @@ class LifxSkill(MycroftSkill):
         """
         if message.data["ListRoom"] is "room" or message.data["ListRoom"] is "here":
             # TODO use settings to configure the default room for the device
-            room = next(iter(self.room_lights))
+            room = next(iter(self.lights_by_room))
         else:
             room = self._match_entity_to_group(message.data["ListRoom"])
 
@@ -83,11 +81,13 @@ class LifxSkill(MycroftSkill):
         else:
             self.speak("The lights in {} are".format(room))
 
-            lights = self.room_lights[room]
+            lights = self.lights_by_room[room]
 
             for light in lights:
-                self.lifx.pulse_lights("white", selector="label:" + light, cycles=1.0)
                 self.speak(light)
+                # Toggle the light to point it out
+                self.lifx.toggle_power(self._get_selector_for_entity(light))
+                self.lifx.toggle_power(self._get_selector_for_entity(light))
 
 
     @intent_handler(IntentBuilder("SetPowerIntent")
@@ -97,17 +97,26 @@ class LifxSkill(MycroftSkill):
         """
         Turn lights on/off by name or room
         """
-        entity = message.data["Entity"]
         state = message.data["LightAction"]
+        entity = self._match_entity_to_known(message.data["Entity"])
+        selector = self._get_selector_for_entity(entity)
 
         if "LightsStatement" in message.data:
             entity = "the {} lights".format(entity)
 
-        selector = self._match_entity_to_selector(entity)
+        results = self.lifx.set_state(selector=selector, power=state)
 
-        self.lifx.set_state(selector=selector, power=state)
-
-        self.speak("Turned {} {}".format(entity, state))
+        if len(results) > 1:
+            data = {
+                "number": len(results),
+                "room": entity,
+            }
+            self.speak_dialog("power.room." + state, data)
+        else:
+            data = {
+                "light": entity,
+            }
+            self.speak_dialog("power.light." + state, data)
 
     @intent_handler(IntentBuilder("SetStateValueIntent")
         .require("SetKeyword")
@@ -118,11 +127,8 @@ class LifxSkill(MycroftSkill):
         """
         A single intent to handle setting the brightness, color and temperature
         """
-        entity = message.data["Entity"]
+        entity = self._match_entity_to_known(message.data["Entity"])
         state_value = message.data["StateValue"]
-
-        self.speak(entity)
-        self.speak(state_value)
 
         if "BrightnessKeyword" in message.data:
             self._handle_set_brightness_intent(entity, state_value)
@@ -139,7 +145,7 @@ class LifxSkill(MycroftSkill):
         """
 
         self.lifx.set_state(
-            selector=self._match_entity_to_selector(entity),
+            selector=self._get_selector_for_entity(entity),
             brightness=(float(value) / 100)
         )
 
@@ -149,7 +155,7 @@ class LifxSkill(MycroftSkill):
         """
         Set the temperature of lights by name or room.
         """
-        selector = self._match_entity_to_selector(entity)
+        selector = self._get_selector_for_entity(entity)
 
         if selector is None:
             self.speak("Unable to find the light or room {}".format(entity))
@@ -163,7 +169,7 @@ class LifxSkill(MycroftSkill):
 
     def _handle_set_color_intent(self, entity, value):
         color_code = self._match_color(value)
-        selector = self._match_entity_to_selector(entity)
+        selector = self._get_selector_for_entity(entity)
 
         if color_code is None:
             self.speak("Cannot set the color {}".format(value))
@@ -174,17 +180,32 @@ class LifxSkill(MycroftSkill):
 
             self.speak_dialog("done")
 
-    def _match_entity_to_selector(self, entity):
+    def _match_entity_to_known(self, entity):
         """
-        Find the closest matching selector to the entity
+        Find the closest matching known light/group to the entity
         """
-        for _, name in self.groups.iteritems():
-            if fuzz.ratio(name, entity) > 70:
-                return "group:" + name
-        
-        for _, name in self.labels.iteritems():
-            if fuzz.ratio(name, entity) > 70:
-                return "label:" + name
+        group = self._match_entity_to_group(entity)
+        if group:
+            return group
+
+        light = self._match_entity_to_light(entity)
+        if light:
+            return light
+
+        # TODO Return configured room instead
+        return "all"
+
+    def _get_selector_for_entity(self, entity):
+        """
+        Create a label for the given entity
+        """
+        for group, _ in self.lights_by_room.iteritems():
+            if entity is group:
+                return "group:" + group
+
+        for light in self.lights:
+            if entity is light:
+                return "label:" + light
 
         # TODO Return configured room instead
         return "all"
@@ -193,10 +214,20 @@ class LifxSkill(MycroftSkill):
         """
         Find the closest matching group to the entity
         """
-        for _, name in self.groups.iteritems():
-            if fuzz.ratio(name, entity) > 70:
-                return name
-        
+        for group, _ in self.lights_by_room.iteritems():
+            if fuzz.ratio(group, entity) > 70:
+                return group
+
+        return None
+
+    def _match_entity_to_light(self, entity):
+        """
+        Find the closest matching light to the entity
+        """
+        for light in self.lights:
+            if fuzz.ratio(light, entity) > 70:
+                return light
+
         return None
 
     def _match_color(self, color):
@@ -217,35 +248,18 @@ class LifxSkill(MycroftSkill):
         return key
 
     def _collect_devices(self):
-        self.room_lights = defaultdict(list)
+        # Reset light information
+        self.lights_by_room = defaultdict(list)
+        self.lights = []
+
         lights = self.lifx.list_lights()
         for light in lights:
-            label = light.get("label")
-            normalized = self._normalize_selector(label)
-            self.register_vocabulary(normalized, "Label")
-
-            self.labels[normalized] = label
+            self.lights.append(light["label"])
 
             if light.get("group").get("name"):
                 group = light.get("group").get("name")
-                normalized = self._normalize_selector(group)
-                self.register_vocabulary(normalized, "Group")
 
-                self.groups[normalized] = group
-                self.room_lights[group].append(label)
-
-    def _normalize_selector(self, selector):
-        return selector.lower().replace("'", "")
-
-    def _choose_selector(self, message):
-        selector = "all"
-        if "Group" in message.data:
-            selector = "group:" + self.groups.get(self._normalize_selector(message.data["Group"]))
-        elif "Label" in message.data:
-            selector = "label:" + self.labels.get(self._normalize_selector(message.data["Label"]))
-
-        return selector
-
+                self.lights_by_room[group].append(light["label"])
 
 def create_skill():
     """
