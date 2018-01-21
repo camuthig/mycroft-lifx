@@ -1,0 +1,1 @@
+(change|set) (brightness|warmth|color) (?:of )?(?P<Entity>.*?) (?:lights)? (?:to)? (?P<StateValue>.*)(?:percent|kelvin)?

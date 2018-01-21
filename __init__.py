@@ -45,14 +45,13 @@ class LifxSkill(MycroftSkill):
         # TODO Get the key from the the settingsmeta.json instead
         self.lifx = PIFX(self._get_key())
 
-        # These will be set by _collect_selectors
+        # These will be set by _collect_devices
         self.labels = {}
         self.groups = {}
         self.room_lights = {}
 
     def initialize(self):
-        # self.load_regex_files(path.join(path.dirname(__file__), 'regex', self.lang))
-        self._collect_selectors()
+        self._collect_devices()
 
     def stop(self):
         pass
@@ -61,12 +60,18 @@ class LifxSkill(MycroftSkill):
         .require("LifxKeyword")
         .require("ConnectKeyword"))
     def handle_connect_to_lifx_intent(self, message):
-        self._collect_selectors()
+        """
+        Connect to Lifx, syncing up device data
+        """
+        self._collect_devices()
         self.speak_dialog("done")
 
     @intent_handler(IntentBuilder("ListLightsIntent")
         .require("ListRoom"))
     def handle_list_lights_intent(self, message):
+        """
+        List all of the lights in the default room or the named room
+        """
         if message.data["ListRoom"] is "room" or message.data["ListRoom"] is "here":
             # TODO use settings to configure the default room for the device
             room = next(iter(self.room_lights))
@@ -89,6 +94,9 @@ class LifxSkill(MycroftSkill):
         .require("LightAction")
         .require("Entity"))
     def handle_set_power_intent(self, message):
+        """
+        Turn lights on/off by name or room
+        """
         entity = message.data["Entity"]
         state = message.data["LightAction"]
 
@@ -101,65 +109,70 @@ class LifxSkill(MycroftSkill):
 
         self.speak("Turned {} {}".format(entity, state))
 
-    @intent_handler(IntentBuilder("SetBrightnessIntent")
+    @intent_handler(IntentBuilder("SetStateValueIntent")
+        .require("SetKeyword")
+        .one_of("WarmthKeyword", "BrightnessKeyword", "ColorKeyword")
         .require("Entity")
-        .require("BrightnessValue"))
-    def handle_set_brightness_intent(self, message):
-
+        .require("StateValue") )
+    def handle_set_state_intent(self, message):
+        """
+        A single intent to handle setting the brightness, color and temperature
+        """
         entity = message.data["Entity"]
-        brightness_value = message.data["BrightnessValue"]
+        state_value = message.data["StateValue"]
 
-        res = self.lifx.set_state(
+        self.speak(entity)
+        self.speak(state_value)
+
+        if "BrightnessKeyword" in message.data:
+            self._handle_set_brightness_intent(entity, state_value)
+        elif "WarmthKeyword" in message.data:
+            self._handle_set_temperature_intent(entity, state_value)
+        elif "ColorKeyword" in message.data:
+            self._handle_set_color_intent(entity, state_value)
+        else:
+            self.speak_dialog("whoops")
+
+    def _handle_set_brightness_intent(self, entity, value):
+        """
+        Set the brightess of lights by name or room. The room should be a percentage of brightness
+        """
+
+        self.lifx.set_state(
             selector=self._match_entity_to_selector(entity),
-            brightness=(float(brightness_value) / 100)
+            brightness=(float(value) / 100)
         )
 
-        self.speak("Set {} to {} percent".format(entity, brightness_value))
+        self.speak("Set {} to {} percent".format(entity, value))
 
-    @intent_handler(IntentBuilder("ChangeBrightnessIntent")
-        .one_of("BrightenKeyword", "DimKeyword")
-        .one_of("Label", "Group", "RoomKeyword"))
-    def handle_change_brightness_intent(self, message):
-        if "BrightenKeyword" in message.data:
-            brightness = .1
+    def _handle_set_temperature_intent(self, entity, value):
+        """
+        Set the temperature of lights by name or room.
+        """
+        selector = self._match_entity_to_selector(entity)
+
+        if selector is None:
+            self.speak("Unable to find the light or room {}".format(entity))
         else:
-            brightness = -.1
+            self.lifx.set_state(
+                selector=selector,
+                color="kelvin:{}".format(value)
+            )
 
-        selector = self._choose_selector(message)
+            self.speak_dialog("done")
 
-        # TODO Get the library updated to include this feature
-        #self.lifx.set_delta(selector=selector, brightness=brightness)
+    def _handle_set_color_intent(self, entity, value):
+        color_code = self._match_color(value)
+        selector = self._match_entity_to_selector(entity)
 
-        self.speak_dialog("done")
-
-    @intent_handler(IntentBuilder("ChangeWarmthIntent")
-        .one_of("CoolKeyword", "WarmKeyword")
-        .one_of("Label", "Group", "RoomKeyword", "LightsKeyword"))
-    def handle_change_warmth_intent(self, message):
-        if "CoolKeyword" in message.data:
-            kelvin = 500
+        if color_code is None:
+            self.speak("Cannot set the color {}".format(value))
+        elif selector is None:
+            self.speak("Could not find the light or room {}".format(entity))
         else:
-            kelvin = -500
+            self.lifx.set_state(selector=selector, color=color_code)
 
-        selector = self._choose_selector(message)
-
-        # TODO Get the library updated to include this feature
-        #self.lifx.set_delta(selector=selector, kelvin=kelvin)
-
-        self.speak_dialog("done")
-
-    @intent_handler(IntentBuilder("SetColorIntent")
-        .require("ColorKeyword")
-        .one_of("Label", "Group", "RoomKeyword", "LightsKeyword"))
-    def handle_set_color_intent(self, message):
-        color = COLORS.get(message.data["ColorKeyword"].lower())
-
-        if color is None:
-            self.speak("I could not determine the color to set the lights to")
-        else:
-            self.lifx.set_state(selector=self._choose_selector(message), color=color)
-
-        self.speak_dialog("done")
+            self.speak_dialog("done")
 
     def _match_entity_to_selector(self, entity):
         """
@@ -186,6 +199,16 @@ class LifxSkill(MycroftSkill):
         
         return None
 
+    def _match_color(self, color):
+        """
+        Find the best match for the color requested
+        """
+        for name, code in COLORS.iteritems():
+            if fuzz.ratio(name, color) > 70:
+                return code
+
+        return None
+
     def _get_key(self):
         key_file = open(path.join(path.abspath(path.dirname(__file__)), 'api_key'), 'r')
         key = key_file.read()
@@ -193,7 +216,7 @@ class LifxSkill(MycroftSkill):
 
         return key
 
-    def _collect_selectors(self):
+    def _collect_devices(self):
         self.room_lights = defaultdict(list)
         lights = self.lifx.list_lights()
         for light in lights:

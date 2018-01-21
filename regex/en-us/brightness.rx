@@ -1,1 +1,0 @@
-(set) (?:brightness of )?(?P<Entity>.*) (to) (?P<BrightnessValue>\d*)(?: percent)?
