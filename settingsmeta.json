@@ -1,0 +1,18 @@
+{
+    "name": "LIFX",
+    "skillMetadata": {
+        "sections": [
+            {
+                "name": "LIFX Settings",
+                "fields": [
+                    {
+                        "name": "api_key",
+                        "type": "text",
+                        "label": "API Key",
+                        "value": ""
+                    }
+                ]
+            }
+        ]
+    }
+}

@@ -2,3 +2,4 @@ api_key
 .vscode
 /mycroft-lifx
 __init__.pyc
+settings.json
